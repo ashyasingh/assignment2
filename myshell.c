@@ -46,59 +46,23 @@ char *get_args()
     return args;
 }
 
-// parse whiteSpace in command
-char **oldParseW(char *cmd)
-{
-    // duplicate input command to keep it unchanged
-    char *tempCmd = strndup(cmd, strlen(cmd));
-    // savePter for strtok_r
-    char *savePter;
-    int i = 0, size = 0;
-
-    // get the first whitespace token from cmd
-    char *token = strtok_r(tempCmd, " \t", &savePter);
-    // loop through and count number of actual args
-    while (token)
-    {
-        size += strlen(token);
-        token = strtok_r(NULL, " \t", &savePter);
-    }
-
-    // allocate return array of arguments
-    char **ret = calloc(size + 1, sizeof(char *));
-    ret[size] = (char)0;
-
-    // reset the input cmd and savepter
-    strcpy(tempCmd, cmd);
-    savePter = NULL;
-
-    // get token for whitespace from cmd
-    token = strtok_r(tempCmd, " \t", &savePter);
-    // loop through and put args in ret
-    while (token)
-    {
-        // check for invalid pipes
-        if (!strcmp(token, "|") && (i == 0 || i == size - 1))
-        {
-            perror("parseW: invalid pipe input");
-            return NULL;
-        }
-        ret[i++] = token;
-        token = strtok_r(NULL, " \t", &savePter);
-    }
-
-    return ret;
-}
-
 // parse whiteSpace in command, return array of command structs
 struct command *parseW(char *cmd)
 {
-    char *tempCmd = strndup(cmd, strlen(cmd)); // duplicate input command to keep it unchanged
-    char *savePter;                            // savePter for strtok_r
-    int i = 0, size = 0, numCmds = 0;          // i fo
+    // duplicate input command to keep it unchanged
+    char *tempCmd = strndup(cmd, strlen(cmd));
 
-    char *token = strtok_r(tempCmd, " \t", &savePter); // get the first whitespace token from cmd
-    while (token)                                      // loop through and count number of actual args
+    // savePter for strtok_r
+    char *savePter;
+
+    // auxilliary ints
+    int i = 0, size = 0, numCmds = 0;
+
+    // get the first whitespace token from cmd
+    char *token = strtok_r(tempCmd, " \t", &savePter);
+
+    // loop through and count number of actual args
+    while (token)
     {
         // if not operator, add strlen
         if (strcmp(token, "|") && strcmp(token, ">") && strcmp(token, "<") &&
@@ -128,7 +92,7 @@ struct command *parseW(char *cmd)
         if (!strcmp(token, "|") && i == 0 && size == 0)
         {
             printf("parseW: invalid pipe parsed\n");
-            exit(EXIT_FAILURE);
+            return NULL;
         }
 
         // if not operator, add strlen
@@ -142,7 +106,7 @@ struct command *parseW(char *cmd)
             if (size == 0)
             {
                 printf("parseW: invalid syntax, unexpected operator or token '%s'\n", token);
-                exit(EXIT_FAILURE);
+                return NULL;
             }
             else
             {
@@ -162,7 +126,7 @@ struct command *parseW(char *cmd)
     if (!size) // if last token parsed was a pipe, it's invalid
     {
         printf("parseW: invalid pipe parsed\n");
-        exit(EXIT_FAILURE);
+        return NULL;
     }
     commands[i].numArgs = numCmds;
     commands[i].cmd = calloc(size + 1, sizeof(char *)); // add final command allocation
@@ -195,7 +159,7 @@ struct command *parseW(char *cmd)
 }
 
 // runs non pipe/redirection commands
-void runSimple(char **args)
+char *runSimple(struct command *args)
 {
     pid_t pid;
     int i = 0;
@@ -204,65 +168,19 @@ void runSimple(char **args)
     pid = fork(); // store child pid
     if (pid < 0)  // error
     {
-        printf("An error occured while forking child for runSimple.\n");
+        fprintf(stderr, "An error occured while forking child for runSimple.\n");
         exit(EXIT_FAILURE);
     }
     else if (pid == 0) // child
     {
         i = 0;
         // loop and deal with special operators
-        while (args[i])
+        while (args[i].cmd)
         {
-            // printf("cur: %s, next: %s, afteR: %s\n", args[i], args[i + 1], args[i + 2]);
-            // deal with |
-            if (args[i + 1] && !strcmp(args[i + 1], "|"))
-            {
-                int fd1[2]; // Used to store two ends of first pipe
-                pid_t p;
-                if (pipe(fd1) == -1)
-                {
-                    fprintf(stderr, "Pipe Failed");
-                    exit(EXIT_FAILURE);
-                }
-                p = fork();
-                if (p < 0)
-                {
-                    fprintf(stderr, "fork Failed");
-                    exit(EXIT_FAILURE);
-                }
-                // Parent process
-                else if (p > 0)
-                {
-                    close(fd1[0]); // Close reading end of first pipe
-
-                    args[i + 1] = NULL;
-                    // Write input string and close writing end of first
-                    // pipe.
-                    dup2(fd1[1], STDOUT_FILENO);
-                    execvp(args[0], args);
-                    close(fd1[1]);
-
-                    // Wait for child to send a string
-                    wait(NULL);
-                } // child process
-                else
-                {
-                    close(fd1[1]); // Close writing end of first pipe
-                    dup2(fd1[0], STDIN_FILENO);
-                    printf("child cmd: %s\n", args[i + 2]);
-                    char *temp[] = {"wc", "-l", NULL};
-                    execvp(args[i + 2], temp);
-                    // Close both reading ends
-                    close(fd1[0]);
-
-                    exit(0);
-                }
-            }
-
             // deal with &>
-            if (args[i] && !strcmp(args[i], "&>"))
+            if (args[i].cmd && !strcmp(args[i].cmd[0], "&>"))
             {
-                fd = creat(args[i + 1], 0644);
+                fd = creat(args[i + 1].cmd[0], 0644);
                 if (fd < 0)
                 {
                     perror("open");
@@ -271,7 +189,7 @@ void runSimple(char **args)
 
                 if (dup2(fd, STDOUT_FILENO) < 0)
                 {
-                    perror("runSimple: failed dup2 for stdout on &>");
+                    perror("runSimple error: failed dup2 for stdout on &>");
                     exit(EXIT_FAILURE);
                 }
                 if (dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
@@ -280,14 +198,13 @@ void runSimple(char **args)
                     exit(EXIT_FAILURE);
                 }
                 close(fd);
-                args[i] = NULL;
             }
 
             // deal with 2>
-            if (args[i] && !strcmp(args[i], "2>"))
+            if (args[i].cmd && !strcmp(args[i].cmd[0], "2>"))
             {
 
-                fd = creat(args[i + 1], 0644);
+                fd = creat(args[i + 1].cmd[0], 0644);
                 if (fd < 0)
                 {
                     perror("runSimple: error opening file for 2>");
@@ -299,13 +216,12 @@ void runSimple(char **args)
                     exit(EXIT_FAILURE);
                 }
                 close(fd);
-                args[i] = NULL;
             }
 
             // deal with > and 1>
-            if (args[i] && (!strcmp(args[i], ">") || !strcmp(args[i], "1>")))
+            if (args[i].cmd && (!strcmp(args[i].cmd[0], ">") || !strcmp(args[i].cmd[0], "1>")))
             {
-                fd = creat(args[i + 1], 0644);
+                fd = creat(args[i + 1].cmd[0], 0644);
                 if (fd < 0)
                 {
                     perror("runSimple: error opening argument for >");
@@ -319,13 +235,12 @@ void runSimple(char **args)
                     exit(EXIT_FAILURE);
                 }
                 close(fd);
-                args[i] = NULL;
             }
 
             // deal with <, making sure to check if args[i] exists first
-            if (args[i] && !strcmp(args[i], "<"))
+            if (args[i].cmd && !strcmp(args[i].cmd[0], "<"))
             {
-                fd = open(args[i + 1], O_RDONLY);
+                fd = open(args[i + 1].cmd[0], O_RDONLY);
                 if (fd < 0)
                 {
                     perror("runSimple: error opening argument for <");
@@ -337,21 +252,213 @@ void runSimple(char **args)
                     exit(EXIT_FAILURE);
                 }
                 close(fd);
-                args[i] = NULL;
             }
 
             i++;
         }
 
         // exec input with appropriate fd
-        execvp(args[0], args);
-        perror("execvp");
+        execvp(args[0].cmd[0], args[0].cmd);
+        fprintf(stderr, "runSimple error %s: ", args[0].cmd[0]);
+        perror("");
         exit(EXIT_FAILURE);
     }
-    int status;
+    int status = 0;
 
     // parent should wait for child to finish if & not specified
     waitpid(pid, &status, 0);
+}
+
+void runPipedCommands(char *args)
+{
+    int status;      // status for waitpid
+    pid_t pid;       // pid for fork
+    int cmdsRun = 0; // checks how many commands ran
+    int newfds[2];   // stores the new or current fds
+    int oldfds[2];   // stores the old fd's read end
+
+    char *nextCmd;        // string that stores next command to run
+    char *prevCmd = NULL; // string that stores prev command
+    char *cmdToken;       // stores current command token
+    char *cmdSavePter;    // required for strtok_r
+
+    // split tokens of command by |
+    cmdToken = strtok_r(args, "|", &cmdSavePter);
+
+    // loop through command chunks
+    while (cmdToken)
+    {
+        nextCmd = strtok_r(NULL, "|", &cmdSavePter);
+        struct command *commands = parseW(cmdToken);
+
+        // if next command make new pipes
+        if (nextCmd)
+            pipe(newfds);
+
+        // fork
+        pid = fork();
+        if (pid == 0) // child
+        {
+            // if there was prev cmd
+            if (prevCmd)
+            {
+                dup2(oldfds[0], STDIN_FILENO);
+                close(oldfds[0]);
+                close(oldfds[1]);
+            }
+
+            // if next cmd
+            if (nextCmd)
+            {
+                close(newfds[0]);
+                dup2(newfds[1], STDOUT_FILENO);
+                close(newfds[1]);
+            }
+
+            // code to deal with operators
+            int i = 0;
+            int fd;
+            while (commands[i].cmd)
+            {
+                // deal with &>
+                if (!strcmp(commands[i].cmd[0], "&>"))
+                {
+                    // grab the output file
+                    fd = creat(commands[i + 1].cmd[0], 0644);
+                    if (fd < 0)
+                    {
+                        perror("open");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // redirect stdout to the file
+                    if (dup2(fd, STDOUT_FILENO) < 0)
+                    {
+                        perror("runPipedCommands: failed dup2 for stdout on &>");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // redirect stderr to stdout (which is redirected to fd)
+                    if (dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+                    {
+                        perror("runPipedCommands: failed dup2 for stderr on &>");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    close(fd);
+                }
+
+                // deal with 2>
+                if (!strcmp(commands[i].cmd[0], "2>"))
+                {
+                    // open output file
+                    fd = creat(commands[i + 1].cmd[0], 0644);
+                    if (fd < 0)
+                    {
+                        perror("runPipedCommands: error opening file for 2>");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // redirect stderr to that file
+                    if (dup2(fd, STDERR_FILENO) < 0)
+                    {
+                        perror("runPipedCommands: failed dup2 on stderr redirecting on 2>");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    close(fd);
+                }
+
+                // deal with > and 1>
+                if (!strcmp(commands[i].cmd[0], ">") || !strcmp(commands[i].cmd[0], "1>"))
+                {
+                    // create output file
+                    fd = creat(commands[i + 1].cmd[0], 0644);
+                    if (fd < 0)
+                    {
+                        perror("runPipedCommands: error opening argument for >");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // redirect stdout to that file
+                    if (dup2(fd, STDOUT_FILENO) < 0)
+                    {
+                        perror("runPipedCommands: failure dup2 on redirecting STDOUT to fd on > or 1>");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    close(fd);
+                }
+
+                // deal with <
+                if (!strcmp(commands[i].cmd[0], "<"))
+                {
+                    // open input file
+                    fd = open(commands[i + 1].cmd[0], O_RDONLY);
+                    if (fd < 0)
+                    {
+                        perror("runPipedCommands: error opening argument for <");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // redirect stdin to that file
+                    if (dup2(fd, STDIN_FILENO) < 0)
+                    {
+                        perror("runPipedCommands: error dup2 on redirecting stdin to fd on <");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    close(fd);
+                }
+
+                i++;
+            }
+
+            // execvp the command, all fds should be set
+            execvp(commands[0].cmd[0], commands[0].cmd);
+            fprintf(stderr, "runSimple error %s: ", commands[0].cmd[0]);
+            perror("");
+            exit(EXIT_FAILURE);
+        }
+        else if (pid < 0) // FORK ERROR
+        {
+            perror("error");
+            exit(EXIT_FAILURE);
+        }
+
+        // PARENT
+
+        // if there was a prev command
+        if (prevCmd)
+        {
+            close(oldfds[0]);
+            close(oldfds[1]);
+        }
+
+        // if there is next command,
+        // copy over the current fds
+        if (nextCmd)
+        {
+            oldfds[0] = newfds[0];
+            oldfds[1] = newfds[1];
+        }
+
+        // set next command to run, and
+        // set current command as previous
+        prevCmd = cmdToken;
+        cmdToken = nextCmd;
+        cmdsRun++;
+
+        // do all the stuff above and wait for child to finish
+        waitpid(pid, &status, 0);
+    }
+
+    // parent: if multiple cmds, close
+    if (cmdsRun > 1)
+    {
+        close(oldfds[0]);
+        close(oldfds[1]);
+    }
 }
 
 /*
@@ -392,13 +499,22 @@ int main(int argc, char *argv[])
             while (semi)
             {
                 // get array of args
-                // struct command *args = parseW(semi);
-                char **args = oldParseW(semi);
+                struct command *args = parseW(semi);
                 // if error in parsing, break and reprint prompt
                 if (!args)
                     break;
 
-                runSimple(args);
+                // if pipe runPipedCommands
+                if (strchr(semi, '|'))
+                {
+                    runPipedCommands(semi);
+                }
+                else
+                {
+                    int fds[2] = {STDIN_FILENO, STDOUT_FILENO};
+                    runSimple(args);
+                }
+
                 semi = strtok_r(NULL, ";", &semiSavePter);
             }
         }
